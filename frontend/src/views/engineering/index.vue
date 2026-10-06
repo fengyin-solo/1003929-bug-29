@@ -24,6 +24,50 @@
       </span>
     </p>
 
+    <article class="task-panel">
+      <div class="task-panel-head">
+        <h3>巡查踏勘待办</h3>
+        <span class="muted-text">待踏勘 {{ pendingTasks.length }} 条 · 已处置 {{ doneTasks.length }} 条</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>事项编号</th>
+            <th>巡查编号</th>
+            <th>隐患点编号</th>
+            <th>异常情况</th>
+            <th>状态</th>
+            <th>处置操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="task in surveyTasks" :key="task.事项编号">
+            <td>
+              <router-link class="link" :to="`/patrol/${task.来源记录}`">{{ task.事项编号 }}</router-link>
+            </td>
+            <td>{{ task.巡查编号 }}</td>
+            <td>{{ task.隐患点编号 }}</td>
+            <td>{{ task.异常情况 }}</td>
+            <td>{{ task.status }}</td>
+            <td class="row-actions">
+              <button
+                v-if="task.status === TASK_STATUS.PENDING"
+                class="link"
+                type="button"
+                @click="disposeTask(task)"
+              >
+                确认处置
+              </button>
+              <span v-else class="muted-text">已关闭</span>
+            </td>
+          </tr>
+          <tr v-if="!surveyTasks.length">
+            <td colspan="6" class="empty-state">暂无巡查踏勘事项</td>
+          </tr>
+        </tbody>
+      </table>
+    </article>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -79,7 +123,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import { confirmDisposal, listSurveyTasks, TASK_STATUS } from '@/data/patrol-workflow'
+import type { EntryRow, SurveyTask } from '@/data/types'
 
 const meta = moduleMeta('engineering')
 const columns = ["项目编号", "隐患点编号", "治理方案", "承建方", "合同金额", "开工日期", "计划工期", "项目状态"]
@@ -92,12 +137,30 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const surveyTasks = ref<SurveyTask[]>([])
+const pendingTasks = computed(() => surveyTasks.value.filter((task) => task.status === TASK_STATUS.PENDING))
+const doneTasks = computed(() => surveyTasks.value.filter((task) => task.status === TASK_STATUS.DONE))
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 工程页的踏勘处置与巡查详情走同一个确认入口：并发/重复只成功一次，回写不追加事项。
+function disposeTask(task: SurveyTask) {
+  errorMessage.value = ''
+  const conclusion = window.prompt('请填写踏勘处置结论（留空使用默认结论）', '')
+  if (conclusion === null) {
+    return
+  }
+  const result = confirmDisposal(Number(task.来源记录), conclusion)
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  reload()
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +191,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    surveyTasks.value = listSurveyTasks()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '治理工程列表读取失败'
   }
@@ -135,3 +199,16 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.task-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.task-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.task-panel-head h3 { margin: 0; font-size: 15px; }
+.muted-text { color: var(--muted); font-size: 12px; }
+</style>

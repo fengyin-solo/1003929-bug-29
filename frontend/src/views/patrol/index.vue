@@ -43,11 +43,16 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <router-link v-if="column === '巡查编号'" class="link" :to="`/patrol/${row.id}`">
+              {{ row[column] ?? '—' }}
+            </router-link>
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in availableActions(String(row.status))"
               :key="action"
               class="link"
               type="button"
@@ -55,6 +60,7 @@
             >
               {{ action }}
             </button>
+            <span v-if="!availableActions(String(row.status)).length" class="muted-text">无</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -73,19 +79,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import { downloadEntries, listEntries, moduleMeta } from '@/api/local-service'
 import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+  availableActions,
+  PATROL_STATUS,
+  runPatrolAction,
+} from '@/data/patrol-workflow'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('patrol')
 const columns = ["巡查编号", "隐患点编号", "巡查日期", "巡查人员", "巡查范围", "发现异常", "处置措施", "巡查状态"]
-const actions = ["完成巡查", "报告异常", "确认处置"]
 const statuses = ["待巡查", "已巡查", "发现异常", "已处置"]
-const stats = [{"label": "本月巡查次数", "value": 0}, {"label": "发现异常数", "value": 0}, {"label": "待处置数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
@@ -98,6 +102,18 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+// 指标随列表实时计算：异常量只看异常/已处置，待处置只看「发现异常」。
+const stats = computed(() => [
+  { label: '本月巡查次数', value: rows.value.length },
+  {
+    label: '发现异常数',
+    value: rows.value.filter((row) => row.abnormal === true).length,
+  },
+  {
+    label: '待处置数',
+    value: rows.value.filter((row) => String(row.status) === PATROL_STATUS.ABNORMAL).length,
+  },
+])
 
 function resetFilters() {
   filters.value = {}
@@ -112,9 +128,24 @@ function openCreate() {
   errorMessage.value = '巡查记录登记入口尚未接入审批流'
 }
 
+// 异常情况与处置结论允许在列表上快速补充；取消输入不做任何写入。
+function askPayload(action: string): string | null {
+  if (action === '报告异常') {
+    return window.prompt('请填写异常情况（留空使用默认描述）', '') ?? null
+  }
+  if (action === '确认处置') {
+    return window.prompt('请填写处置结论（留空使用默认结论）', '') ?? null
+  }
+  return ''
+}
+
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  const payload = askPayload(action)
+  if (payload === null) {
+    return
+  }
+  const result = runPatrolAction(action, Number(row.id), payload)
   if (!result.ok) {
     errorMessage.value = result.message
     return
@@ -135,3 +166,7 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.muted-text { color: var(--muted); font-size: 12px; }
+</style>
